@@ -1,0 +1,108 @@
+name: Build and Release STM32 (CMake)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write # Indispensable pour créer des tags et des GitHub Releases
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Récupérer le dépôt et l'historique Git complet (nécessaire pour les tags)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. Vérifier si le commit contient "--skip-build" pour ignorer la compilation
+      - name: Determine Build Skip
+        id: skip_build
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if [[ "$COMMIT_MSG" =~ --skip-build ]]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 3. Installer la toolchain ARM GCC et Ninja
+      - name: Install ARM Toolchain & Ninja
+        if: ${{ steps.skip_build.outputs.skip == 'false' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi ninja-build
+
+      # 4. Configurer et compiler le projet avec CMake
+      - name: Configure and Build with CMake
+        if: ${{ steps.skip_build.outputs.skip == 'false' }}
+        run: |
+          if [ -f "CMakePresets.json" ]; then
+            cmake --preset Release
+            cmake --build --preset Release --parallel
+          else
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --parallel
+          fi
+
+      # 5. Générer systématiquement les fichiers .hex et .bin et afficher la taille mémoire
+      - name: Generate Binaries (.hex / .bin) & Print Size
+        if: ${{ steps.skip_build.outputs.skip == 'false' }}
+        run: |
+          ELF_FILE=$(find build -name "*.elf" | head -n 1)
+          if [ -z "$ELF_FILE" ]; then
+            echo "Erreur : aucun fichier .elf trouvé dans build/"
+            exit 1
+          fi
+          BASE_NAME="${ELF_FILE%.elf}"
+          arm-none-eabi-objcopy -O ihex "$ELF_FILE" "${BASE_NAME}.hex"
+          arm-none-eabi-objcopy -O binary "$ELF_FILE" "${BASE_NAME}.bin"
+          arm-none-eabi-size "$ELF_FILE"
+
+      # 6. Extraire le numéro de version (vX.Y.Z) depuis le message de commit
+      - name: Extract Version from Commit
+        if: ${{ steps.skip_build.outputs.skip == 'false' }}
+        id: extract_version
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if [[ $COMMIT_MSG =~ (v[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            VERSION=${BASH_REMATCH[1]}
+            echo "TAG_NAME=$VERSION" >> $GITHUB_OUTPUT
+            echo "RELEASE_NAME=firmware-$VERSION" >> $GITHUB_OUTPUT
+          else
+            DATE=$(date +'%Y%m%d')
+            SHA=$(git rev-parse --short HEAD)
+            echo "TAG_NAME=auto-$DATE-$SHA" >> $GITHUB_OUTPUT
+            echo "RELEASE_NAME=firmware-auto-$DATE-$SHA" >> $GITHUB_OUTPUT
+          fi
+
+      # 7. Créer une GitHub Release avec les binaires attachés
+      - name: Create GitHub Release
+        if: ${{ steps.skip_build.outputs.skip == 'false' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.extract_version.outputs.TAG_NAME }}
+          name: ${{ steps.extract_version.outputs.RELEASE_NAME }}
+          files: |
+            build/**/*.elf
+            build/**/*.hex
+            build/**/*.bin
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 8. Sauvegarder les binaires en tant qu'artefacts du run Actions
+      - name: Upload Firmware Artifacts
+        if: ${{ steps.skip_build.outputs.skip == 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stm32-firmware-${{ steps.extract_version.outputs.TAG_NAME }}
+          path: |
+            build/**/*.elf
+            build/**/*.hex
+            build/**/*.bin
