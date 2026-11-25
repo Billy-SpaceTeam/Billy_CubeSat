@@ -67,10 +67,18 @@ void Error_Handler(void);
 #define USART_RX_GPIO_Port GPIOA
 #define LD2_Pin GPIO_PIN_5
 #define LD2_GPIO_Port GPIOA
+#define Photo_4_Pin GPIO_PIN_10
+#define Photo_4_GPIO_Port GPIOB
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
 #define TCK_GPIO_Port GPIOA
+#define Photo_1_Pin GPIO_PIN_3
+#define Photo_1_GPIO_Port GPIOB
+#define Photo_2_Pin GPIO_PIN_4
+#define Photo_2_GPIO_Port GPIOB
+#define Photo_3_Pin GPIO_PIN_5
+#define Photo_3_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
