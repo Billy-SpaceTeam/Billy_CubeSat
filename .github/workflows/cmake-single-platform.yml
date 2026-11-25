@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Récupérer le dépôt et l'historique Git complet (nécessaire pour les tags)
+      # 1. Récupérer le dépôt, l'historique Git complet et tous les tags existants
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -46,7 +46,7 @@ jobs:
             cmake --preset Release
             cmake --build --preset Release --parallel
           else
-            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
             cmake --build build --parallel
           fi
 
@@ -64,22 +64,29 @@ jobs:
           arm-none-eabi-objcopy -O binary "$ELF_FILE" "${BASE_NAME}.bin"
           arm-none-eabi-size "$ELF_FILE"
 
-      # 6. Extraire le numéro de version (vX.Y.Z) depuis le message de commit
-      - name: Extract Version from Commit
+      # 6. Auto-incrémenter la version (v1.0, v1.1, v1.2...) ou lire vX.Y depuis le commit
+      - name: Auto-Increment Firmware Version
         if: ${{ steps.skip_build.outputs.skip == 'false' }}
         id: extract_version
         run: |
+          git fetch --tags
           COMMIT_MSG=$(git log -1 --pretty=%B)
-          if [[ $COMMIT_MSG =~ (v[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+
+          if [[ $COMMIT_MSG =~ (v[0-9]+\.[0-9]+(\.[0-9]+)?) ]]; then
             VERSION=${BASH_REMATCH[1]}
-            echo "TAG_NAME=$VERSION" >> $GITHUB_OUTPUT
-            echo "RELEASE_NAME=firmware-$VERSION" >> $GITHUB_OUTPUT
           else
-            DATE=$(date +'%Y%m%d')
-            SHA=$(git rev-parse --short HEAD)
-            echo "TAG_NAME=auto-$DATE-$SHA" >> $GITHUB_OUTPUT
-            echo "RELEASE_NAME=firmware-auto-$DATE-$SHA" >> $GITHUB_OUTPUT
+            LATEST_TAG=$(git tag -l "v1.*" --sort=-v:refname | head -n 1)
+            if [ -z "$LATEST_TAG" ]; then
+              VERSION="v1.0"
+            else
+              MINOR=$(echo "$LATEST_TAG" | sed -E 's/^v1\.([0-9]+).*/\1/')
+              NEXT_MINOR=$((MINOR + 1))
+              VERSION="v1.${NEXT_MINOR}"
+            fi
           fi
+
+          echo "TAG_NAME=$VERSION" >> $GITHUB_OUTPUT
+          echo "RELEASE_NAME=Firmware $VERSION" >> $GITHUB_OUTPUT
 
       # 7. Créer une GitHub Release avec les binaires attachés
       - name: Create GitHub Release
@@ -101,7 +108,7 @@ jobs:
         if: ${{ steps.skip_build.outputs.skip == 'false' }}
         uses: actions/upload-artifact@v4
         with:
-          name: stm32-firmware-${{ steps.extract_version.outputs.TAG_NAME }}
+          name: Firmware-${{ steps.extract_version.outputs.TAG_NAME }}
           path: |
             build/**/*.elf
             build/**/*.hex
